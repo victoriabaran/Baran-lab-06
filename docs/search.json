@@ -1,0 +1,100 @@
+[
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "",
+    "text": "data &lt;- read_excel(\"bfi.xlsx\")\ndata&lt;- data|&gt;\n  mutate_at(2:26, as.integer)"
+  },
+  {
+    "objectID": "index.html#question-and-predictions",
+    "href": "index.html#question-and-predictions",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "Question and Predictions",
+    "text": "Question and Predictions\nThe bfi data contains 25 personality items from 2,800 participants. For each of the personality traits in the Big five, there are 5 items used to score. Each participant answered the items on a 6-point scale from Very inaccurate to Very accurate.\nThe chosen trait throughout this analysis will be openness. The ordered outcome is one openness item, O4, “Spend time reflecting on things”. The predictor is a person’s Neuroticism subscale score, the mean of N1 to N5.\nI predict that as people get more neurotic, they will be more likely to spend time reflecting on things. I expect this to happen because the personality traits associated with neuroticism, such as panic, anger, and mood swings, may stem from not only self-reflection, but reflecting on others behaviour. I imagine that reflecting on behaviour in general leads to a heightened emotional response.\nThe number of participants went from 2,800 to 2786 participants after dropping those with missing answers. The predictor was scored by taking the mean of the five items (N1 to N5) on neuroticism, with each scale being 1 through 6, with no reverse-keyed items. Prior to centring, the average neuroticism score was 3.16."
+  },
+  {
+    "objectID": "index.html#results-and-write-up",
+    "href": "index.html#results-and-write-up",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "Results and Write up",
+    "text": "Results and Write up\nWe were predicting responses to the Openness item O4, “Spend time reflecting on things,” from the neuroticism score. This was done by having participants choose O4 based on a 6-point scale from very inaccurate to very accurate, and comparing it to the mean-centred subscale score (N = 2,786). None of the categories were collapsed. The least common category, Very inaccurate, still contained 55 responses. Adding neuroticism significantly improved fit over a thresholds-only null model²(1) = 112.26, p &lt; .001, and lowered AIC by 110.3 points, so the model including neuroticism was kept. People who were considered more neurotic were more likely to then respond higher on O4, OR = 1.37, 95% CI [1.29, 1.46], p &lt; .001. Each one-point increase in neuroticism raised the odds of a higher response by about 37%. The proportional odds assumption held, χ²(4) = 5.68, p = 0.225, so a partial proportional odds model was not needed. The predicted probability of endorsing the item (Slightly accurate or higher) rose from 0.88 at a neuroticism score of 3 to 0.95 at a score of 6 (Figure 1). These results support the prediction that people higher in neuroticism spend more time reflecting on things."
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html",
+    "href": "Ordinal_Lab6_Demo.html",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "",
+    "text": "The bfi data contain 25 personality items from 2,800 people, five items per Big Five trait. Each item is answered on a 6-point scale from Very inaccurate to Very accurate.\nThe chosen trait is Neuroticism. The ordered outcome is one Neuroticism item, N1, “Get angry easily.” The predictor is a person’s Agreeableness subscale score, the mean of A1 to A5 with A1 reverse-keyed.\nI predict that as people are more agreeable, they will be less likely to get angry easily.\nBe sure to check assignment instructions for what should be included in your report. Not all descriptive components are included in this demo."
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html#question-and-predictions",
+    "href": "Ordinal_Lab6_Demo.html#question-and-predictions",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "",
+    "text": "The bfi data contain 25 personality items from 2,800 people, five items per Big Five trait. Each item is answered on a 6-point scale from Very inaccurate to Very accurate.\nThe chosen trait is Neuroticism. The ordered outcome is one Neuroticism item, N1, “Get angry easily.” The predictor is a person’s Agreeableness subscale score, the mean of A1 to A5 with A1 reverse-keyed.\nI predict that as people are more agreeable, they will be less likely to get angry easily.\nBe sure to check assignment instructions for what should be included in your report. Not all descriptive components are included in this demo."
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html#load-and-inspect-the-data",
+    "href": "Ordinal_Lab6_Demo.html#load-and-inspect-the-data",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "Load and inspect the data",
+    "text": "Load and inspect the data"
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html#data-preparation",
+    "href": "Ordinal_Lab6_Demo.html#data-preparation",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "Data preparation",
+    "text": "Data preparation"
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html#the-ordered-outcome",
+    "href": "Ordinal_Lab6_Demo.html#the-ordered-outcome",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "The ordered outcome",
+    "text": "The ordered outcome\nCheck that no category is empty or very sparse.\n\n\n# A tibble: 6 × 3\n  N1                        n      p\n  &lt;ord&gt;                 &lt;int&gt;  &lt;dbl&gt;\n1 Very inaccurate         654 0.235 \n2 Moderately inaccurate   654 0.235 \n3 Slightly inaccurate     427 0.154 \n4 Slightly accurate       515 0.185 \n5 Moderately accurate     334 0.120 \n6 Very accurate           194 0.0698\n\n\nEvery category has plenty of responses (the smallest, Very accurate, has 194), so each threshold can be estimated without collapsing categories.\nThis can be displayed graphically:"
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html#how-the-predictor-relates-to-the-responses",
+    "href": "Ordinal_Lab6_Demo.html#how-the-predictor-relates-to-the-responses",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "How the predictor relates to the responses",
+    "text": "How the predictor relates to the responses\nWe can also visualize how the predictor relates to the responses, seeing how each person’s Agreeableness score relates to their N1 response. Because many people have the same Agreeableness score and the same N1 response, we use geom_jitter to spread out the overlapping points.\n\n\n\n\n\n\n\n\n\nThe outcome takes only six values. A good model should predict a probability for each of those six categories, not a specific decimal average that is not an option to choose."
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html#an-unordered-outcome",
+    "href": "Ordinal_Lab6_Demo.html#an-unordered-outcome",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "An unordered outcome",
+    "text": "An unordered outcome\nEach person’s dominant trait (their highest of the five subscale scores) is a set of categories with no built-in order. Being highest on Openness is not “more” than being highest on Agreeableness. An outcome like this requires a baseline-category (multinomial) model, such as nnet::multinom(), rather than clm().\nHere we can see how many people have each trait as their highest."
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html#what-the-centred-thresholds-mean",
+    "href": "Ordinal_Lab6_Demo.html#what-the-centred-thresholds-mean",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "What the centred thresholds mean",
+    "text": "What the centred thresholds mean\n\n\n\n\n\n\n\n\nCategory\nThreshold above category\nP(Y ≤ j)\nP(Y = j)\n\n\n\n\nVery inaccurate\n−1.21\n0.23\n0.23\n\n\nModerately inaccurate\n−0.12\n0.47\n0.24\n\n\nSlightly inaccurate\n0.52\n0.63\n0.16\n\n\nSlightly accurate\n1.48\n0.81\n0.19\n\n\nModerately accurate\n2.64\n0.93\n0.12\n\n\nVery accurate\n—\n1.00\n0.07\n\n\n\n\n\n\n\nApply plogis() to each threshold to get a cumulative probability, then take differences. For a person of average Agreeableness, the most likely response is Moderately inaccurate (0.2402445). Their probability of endorsing the item at all, that is, Slightly accurate or lower, is the probability of Slightly accurate at 81%."
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html#b.-comparing-and-interpreting-the-chosen-model",
+    "href": "Ordinal_Lab6_Demo.html#b.-comparing-and-interpreting-the-chosen-model",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "4b. Comparing and interpreting the chosen model",
+    "text": "4b. Comparing and interpreting the chosen model\nThe slope, beta = -0.3975718, is on the latent logit scale. A one-point increase in Agreeableness moves a person’s latent “anger proneness” as reflected by N1 down by 0.3975718. The middle categories are each about 0.8011586 units wide on that scale, so one point of Agreeableness shifts someone by roughly 49.6246064% of a category."
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html#a.-predicted-category-probabilities",
+    "href": "Ordinal_Lab6_Demo.html#a.-predicted-category-probabilities",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "7a. Predicted category probabilities",
+    "text": "7a. Predicted category probabilities\n\n\n\n\n\n\n\n\n\nAt low Agreeableness, much of the probability sits in the “accurate” categories. As Agreeableness rises, it moves toward Very inaccurate and Moderately inaccurate. At every value of Agreeableness, the six probabilities sum to 1, which is why the stack always reaches 100%."
+  },
+  {
+    "objectID": "Ordinal_Lab6_Demo.html#b.-coefficient-plot-of-cumulative-odds-ratios",
+    "href": "Ordinal_Lab6_Demo.html#b.-coefficient-plot-of-cumulative-odds-ratios",
+    "title": "Ordinal Logistic Regression with the Big Five",
+    "section": "7b. Coefficient plot of cumulative odds ratios",
+    "text": "7b. Coefficient plot of cumulative odds ratios\nThe plot shows the shared proportional-odds OR alongside the threshold-specific ORs from Section 5, so it also works as a visual check of proportional odds.\n\n\n\n\n\n\n\n\n\nEvery interval sits well below 1 (the dashed line). The threshold-specific estimates also cluster around the shared estimate, which is what proportional odds implies."
+  }
+]

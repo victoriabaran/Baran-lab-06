@@ -1,0 +1,416 @@
+---
+title: "Ordinal Logistic Regression with the Big Five"
+subtitle: "Does Neuroticism  predict 'Spend time Reflecting on Things'?"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    html-math-method: katex
+execute:
+  echo: true
+  warning: false
+  message: false
+  fig-width: 8
+  fig-height: 4.4
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(tidyverse)
+library(psych)      
+library(ordinal)   
+library(readxl)     
+library(ggeffects)
+library(broom)    
+library(gt)    
+
+```
+
+```{r, load_data}
+data <- read_excel("bfi.xlsx")
+```
+```{r, text_to_integers}
+data<- data|>
+  mutate_at(2:26, as.integer)
+```
+## Question and Predictions 
+
+The `bfi` data contains 25 personality items from 2,800 participants. For each of the personality traits in the Big five, there are 5 items used to score. Each participant answered the items on a 6-point scale from *Very inaccurate* to *Very accurate*.
+
+The chosen trait throughout this analysis will be **openness**. The ordered outcome is one openness item, **O4, “Spend time reflecting on things”**. The predictor is a person’s **Neuroticism subscale score**, the mean of N1 to N5.
+
+I predict that as people get more neurotic, they will be more likely to spend time reflecting on things. I expect this to happen because the personality traits associated with *neuroticism*, such as panic, anger, and mood swings, may stem from not only self-reflection, but reflecting on others behaviour. I imagine that reflecting on behaviour in general leads to a heightened emotional response.
+
+```{r}
+#| echo: FALSE
+
+n_levels <- c("Very inaccurate", "Moderately inaccurate", "Slightly inaccurate",
+              "Slightly accurate", "Moderately accurate", "Very accurate")
+
+keys <- list(
+  Agreeableness     = c("-A1", "A2", "A3", "A4", "A5"),
+  Conscientiousness = c("C1", "C2", "C3", "-C4", "-C5"),
+  Extraversion      = c("-E1", "-E2", "E3", "E4", "E5"),
+  Neuroticism       = c("N1", "N2", "N3", "N4", "N5"),
+  Openness          = c("O1", "-O2", "O3", "O4", "-O5")
+)
+
+scores<-scoreItems(keys, data, totals = F, min=1, max=6)
+
+scores_df<- scores$scores
+
+data <- data |>
+  select(O4) |>
+  bind_cols(as_tibble(scores_df)) |>
+  mutate(
+    O4 = factor(O4, levels = 1:6, labels = n_levels, ordered = TRUE), 
+    highest = factor(names(keys)[max.col(scores_df, ties.method = "first")]), 
+    agree = Neuroticism
+  ) |>
+  drop_na(O4, agree, highest) |>
+  mutate(neuro_c = agree - mean(agree))  
+
+neuro_bar <- mean(data$agree)
+```
+
+The number of participants went from 2,800 to `r nrow(data)` participants after dropping those with missing answers. The predictor was scored by taking the mean of the five items (N1 to N5) on **neuroticism**, with each scale being 1 through 6, with no reverse-keyed items. Prior to centring, the average **neuroticism** score was `r round(neuro_bar, 2)`. 
+
+# 1. Look at the outcomes first
+
+```{r, O4 counts}
+#| echo: FALSE
+
+# Count how many people chose each response option for N1.
+O4_counts <- data |>
+  count(O4) |>
+  # p is the proportion of the sample in each category, P(Y = J).
+  mutate(p = n / sum(n))
+
+O4_counts
+```
+
+```{r, O4 bar graph}
+#| echo: FALSE
+#plot the counts
+plot_O4 <- ggplot(O4_counts, aes(x = O4, y = n, fill = O4)) +
+  geom_col(width = 0.7) +
+  scale_x_discrete(labels = scales::label_wrap(12)) +
+  labs(title = "Six ordered categories: 'Spend time reflectings on things'",
+       x = NULL, y = "People") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| echo: FALSE
+plot_O4
+```
+```{r, jitter plot}
+#| echo: FALSE
+
+plot_jitter<-ggplot(data, aes(agree, as.numeric(O4), colour = O4)) +
+  geom_jitter(width = 0.05, height = 0.15, alpha = 0.25, size = 1.4) +
+  scale_y_continuous(breaks = 1:6, labels = n_levels) +
+  labs(title = "Higher Neuroticism, Higher Time Spent Reflecting on Things ",
+       x = "Neuroticism (subscale mean, 1-6)", y = NULL) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+
+plot_jitter
+```
+Most participants responded spent more time reflecting on things with the concentrated responses ranging between *slightly accurate* to *very accurate*. When examining how higher **neuroticism** related to more time spent reflecting, *very accurate* has the largest proportion of highly neurotic individuals (based on the subscale mean 1-6). One thing that this plot shows is the wide range of **neuroticism** means that higher time spent is associated with, which may make it seem as though the trait is highly overlapped between all possible scores. A good model should predict a probability rather than a single value because a value such as 3.4 is not a possible response, since O4 can only take six ordered values. Therefore, this takes away from the possibility of how likely each answer is at a given level of **neuroticism**. 
+```{r, unordered_outcome}
+
+ordered_dat <- data |>
+  count(highest) |>
+  mutate(highest = fct_reorder(highest, n)) 
+
+unordered_plot <- ggplot(ordered_dat, aes(highest, n)) +
+  geom_col(width = 0.65, fill = "maroon") +
+  coord_flip() +
+  labs(title = "Dominant trait: five categories with no order",
+       x = NULL, y = "People") +
+  theme_minimal()
+
+unordered_plot
+```
+Each bar is a representation of the dominant trait variable that someone has, meaning the Big Five traits they scored highest on. This variable is unordered because none of the traits are built off of each other or carry an inherent scale relative to each other. Meaning, having a specific trait be dominant over another does not make that participant less or more in comparison to another trait. An example would be **neuroticism**; while socially it may have negative connotations, it does not inherently mean that the trait is “less” than someone having a dominant trait of Openness. 
+
+# 2. Cumulative probabilities
+
+```{r, cumulative prob table}
+
+obs_tab <- data |>
+  count(O4) |>
+  mutate(
+    Probability = n / sum(n),
+    CumulativeProbability = cumsum(Probability),
+    CumulativeOdds = if_else(CumulativeProbability < 1,
+                             CumulativeProbability / (1 - CumulativeProbability), NA_real_),
+    Cumulative_Logodds = if_else(CumulativeProbability < 1,
+                                 qlogis(CumulativeProbability), NA_real_)   
+  )
+
+obs_tab |>
+  gt() |>
+  cols_label(
+    O4 = "Category in O4 (j)",
+    n = "n",
+    Probability = "P(Y = J)",
+    CumulativeProbability = "P(Y ≤ j)",
+    CumulativeOdds = "Odds of ≤ j",
+    Cumulative_Logodds = "Log-odds of ≤ j"
+  ) |>
+  fmt_number(columns = c(Probability, CumulativeProbability), decimals = 3) |>
+  fmt_number(columns = c(CumulativeOdds, Cumulative_Logodds), decimals = 2) |>
+  sub_missing(missing_text = "—")
+
+```
+The different cumulative probabilities each show the amount of individuals within each component chose either that exact number, the answer or anything below, the odds of choosing that specific answer or below, in comparison to the odds of above, with lastly the log odds putting it on the scale the model is able to properly represent itself on. The reason the six categories only give five cumulative probabilities is that cumulative probabilities are not a 1-to-1 value between the components; rather, they are a representation of either at or below and comparing it to above, leaving only 5 of those gaps possible among 6 categories. Odds are undefined for the last row because *Very accurate* being the top option does not allow for the number to be above (0), meaning when you do the odds calculator (at or below/above), you are dividing N by 0, leading to no answer. 
+
+The ordinal model suits my outcome because, unlike the Big Five, the responses do carry an ordered value, with *very accurate* being at the top and descending until *very inaccurate*. Additionally, the separation between each of the options is unknown, meaning each participant is able to interpret the difference between options (e.g., *very accurate* to *moderately accurate*), and as researchers, we are unable to control that interpretation. 
+
+# 3. The model with a centred predictor
+
+```{r, estimating_model}
+
+Null <- clm(O4 ~ 1, data = data)
+
+Cent_Pred <- clm(O4 ~ neuro_c, data = data)
+
+summary(Cent_Pred)
+```
+
+```{r, saving elements for inline code}
+
+coef(Cent_Pred)
+
+
+b <- coef(Cent_Pred)[["neuro_c"]]
+
+th <- coef(Cent_Pred)[1:5]
+
+
+cum_avg <- plogis(th)
+
+cat_p <- c(cum_avg[1] - 0,          # Very inaccurate
+           cum_avg[2] - cum_avg[1], # Moderately inaccurate
+           cum_avg[3] - cum_avg[2], # Slightly inaccurate
+           cum_avg[4] - cum_avg[3], # Slightly accurate
+           cum_avg[5] - cum_avg[4], # Moderately accurate
+           1 - cum_avg[5])          # Very accurate
+
+
+or_tab <- tidy(Cent_Pred, conf.int = TRUE, exponentiate = TRUE) |>
+  filter(coef.type == "location")
+```
+
+```{r, Interpret_thresh}
+
+tibble(
+  Category = n_levels,
+  theta = c(th, NA),
+  cum = c(plogis(th), 1),
+  cat_p = diff(c(0, plogis(th), 1))
+) |>
+  gt() |>
+  cols_label(
+    theta = "Threshold above category",
+    cum = "P(Y ≤ j)",
+    cat_p = "P(Y = J)"
+  ) |>
+  fmt_number(columns = theta, decimals = 2) |>
+  fmt_number(columns = c(cum, cat_p), decimals = 2) |>
+  sub_missing(missing_text = "—")
+
+```
+Since the scale for each of the traits ranged between 1 and 6, an answer, or predictor, cannot equal 0, since that would describe an option that does not exist. Since the threshold is the cut point for a person whose predictor is 0, centering, by subtracting the mean, makes 0 mean ‘exactly average **neuroticism**’. This is done by subtracting the mean. The slope therefore doesn't change because when you are centring, you are not changing the individual's scores, but rather just shifting them along a scale. As represented by the P(Y = J) column, the most likely response would be *very accurate* (`r round(max(cat_p), 2)`). Additionally, the probability of endorsing (slightly accurate or higher) is `r round(1 - cum_avg[3], 2)`, as seen by adding anything above *slightly inaccurate* in P(Y = J). 
+
+# 4. Null model versus one-predictor model
+
+```{r}
+
+coef(Null)
+obs_tab$Cumulative_Logodds[1:5]
+
+```
+The thresholds no longer match because the model is not describing one person's threshold; specifically, someone with the average **neuroticism** (after centring, 0). Thus, since this becomes the probability for a person, not the whole sample mixed into one, the numbers change by a small amount. 
+
+```{r, LRT}
+
+lrt <- anova(Null, Cent_Pred)
+lrt
+```
+```{r, AIC}
+
+tibble(
+  Model = c("Null", "Neuroticism"),
+  Parameters = c(length(coef(Null)), length(coef(Cent_Pred))),
+  logLik = c(logLik(Null), logLik(Cent_Pred)),
+  AIC = c(AIC(Null), AIC(Cent_Pred))
+) |>
+  mutate(`ΔAIC` = AIC - min(AIC)) |>
+  gt() |>
+  fmt_number(columns = c(logLik, AIC, `ΔAIC`), decimals = 1)
+```
+```{r, lrt aic values for inline coding}
+#| echo: FALSE
+
+# The LRT table has one row per model; row 2 holds the test results.
+# $ pulls out a column by name.
+lr_stat <- lrt$LR.stat[2]
+lr_df <- lrt$df[2]
+lr_p <- lrt$`Pr(>Chisq)`[2]
+d_aic <- AIC(Null) - AIC(Cent_Pred)
+```
+The likelihood ratio test was used to compare the null model to the centred **neuroticism** model. Adding **neuroticism** significantly improved model fit χ²(`r lr_df`) = `r round(lr_stat, 2)`, *p* < .001. This means that knowing a person's **neuroticism** score helped predict how they respond to “Spend time reflecting on things”. This improvement is beyond just knowing how responses are spread across the sample. Additionally, the model with **neuroticism** had a lower AIC than the null by `r round(d_aic, 1)`. Because both the likelihood ratio test and AIC showed improvements in the **neuroticism** model, it was selected as the final model for the analysis. 
+
+The estimated slope for the entire **neuroticism** model was β= `r round(b, 2)` on the latent logit scale. **Neuroticism** raises a person's position on the scale for “Spend time reflecting on things,” as seen by the positive slope number. Therefore, each one-point increase in **neuroticism** moves a person `r round(b, 2)` across the scale. The middle categories are `r round(mean(diff(th)[2:3]), 2)` units wide, so a one-point increase in **neuroticism** moves a person roughly `r round(100 * b / mean(diff(th)[2:3]))`% of the way across one response category.
+
+# 5. Checking proportional odds
+
+```{r, nominal test}
+#| echo: FALSE
+
+nt <- nominal_test(Cent_Pred)
+nt
+```
+
+```{r, nominal values for inline}
+#| echo: FALSE
+
+# nt is a table: pick out [row, column] by name
+
+nt_lrt <- nt["neuro_c", "LRT"]
+nt_df <- nt["neuro_c", "Df"]
+nt_p <- nt["neuro_c", "Pr(>Chi)"]
+```
+
+```{r}
+
+m_nom <- clm(O4 ~ 1, nominal = ~ neuro_c, data = data)
+```
+
+```{r}
+nom_est <- coef(m_nom)[6:10]
+nom_se <- sqrt(diag(vcov(m_nom)))[6:10]
+
+threshold_or <- tibble(
+  Threshold = c("Very inaccurate | Moderately inaccurate",
+                "Moderately inaccurate | Slightly inaccurate",
+                "Slightly inaccurate | Slightly accurate",
+                "Slightly accurate | Moderately accurate",
+                "Moderately accurate | Very accurate"),
+  Estimate = nom_est,
+  SE = nom_se,
+  OR = exp(-Estimate),              
+  low = exp(-(Estimate + 1.96 * SE)),
+  high = exp(-(Estimate - 1.96 * SE))
+)
+```
+Since the Pr(>Chi) value was greater than 0.05, meaning it is not significant, and the proportional odds assumption was supported for **neuroticism**. A likelihood ratio test was used to compare the model with one shared **neuroticism** slope to a model allowing separate slopes at each threshold. This was not significant  χ²(`r nt_df`) = `r round(nt_lrt, 2)`, *p* = `r round(nt_p, 3)`. Allowing **neuroticism** to have a different influence on each of the thresholds did not improve the fit; rather, a single shared slope is good enough, and a partial proportional odds model was not needed. 
+
+# 6. Interpreting the coefficient by changing odds ratios to probabilities
+
+```{r, interpret odds ratio}
+
+or_tab <- tidy(Cent_Pred, conf.int = TRUE, exponentiate = TRUE) |>
+  filter(coef.type == "location")
+```
+**Neuroticism:** e^β^ = `r round(or_tab$estimate, 2)`, 95% CI [`r round(or_tab$conf.low, 2)`, `r round(or_tab$conf.high, 2)`], *p*< .001. Meaning, each one-point increase in **neuroticism** multiplies the odds of giving a higher response to “Spend time reflecting on things”. An example of this would be that being high in **neuroticism** leads to a response of *slightly accurate* or higher versus below. The increase is by `r or_tab$estimate`. That is a **`r round(100 * (or_tab$estimate - 1))`% increase** in those odds 
+
+```{r, converting the OR to probabilities}
+#| echo: FALSE
+
+
+# Neuroticism = 3
+logodds_3 <- th[3] - b * (3 - neuro_bar)   # log-odds of at or below
+prob_3    <- 1 - plogis(logodds_3)         # plogis() -> probability; 1 - it = P(above)
+odds_3    <- prob_3 / (1 - prob_3)         # odds of being above
+
+# Neurticism = 4
+logodds_4 <- th[3] - b * (4 - neuro_bar)
+prob_4    <- 1 - plogis(logodds_4)
+odds_4    <- prob_4 / (1 - prob_4)
+
+# Neuroticism = 5
+logodds_5 <- th[3] - b * (5 - neuro_bar)
+prob_5    <- 1 - plogis(logodds_5)
+odds_5    <- prob_5 / (1 - prob_5)
+
+# Neuroticism = 6
+logodds_6 <- th[3] - b * (6 - neuro_bar)
+prob_6    <- 1 - plogis(logodds_6)
+odds_6    <- prob_6 / (1 - prob_6)
+
+prob_tab <- tibble(
+  Neuroticism = c(3, 4, 5, 6),
+  Prob = c(prob_3, prob_4, prob_5, prob_6),
+  Odds = c(odds_3, odds_4, odds_5, odds_6)
+)
+
+prob_tab |>
+  gt() |>
+  cols_label(Prob = "P(Slightly accurate or higher)") |>
+  fmt_number(columns = c(Prob, Odds), decimals = 2)
+```
+The odds of responding *slightly accurate* or higher change by the same factor at each step in **neuroticism**: `r round(prob_tab$Odds[2]/prob_tab$Odds[1], 2)` from 3 to 4, `r round(prob_tab$Odds[3]/prob_tab$Odds[2], 2)` from 4 to 5, and `r round(prob_tab$Odds[4]/prob_tab$Odds[3], 2)` from 5 to 6. The probability, however, does not change by the same amount in each step. It rises by `r round(prob_tab$Prob[2] - prob_tab$Prob[1], 3)` from 3 to 4, by `r round(prob_tab$Prob[3] - prob_tab$Prob[2], 3)` from 4 to 5, and by only `r round(prob_tab$Prob[4] - prob_tab$Prob[3], 3)` from 5 to 6. The reason this happens is that probability can't take a value above 1, and since most people already endorse the item, the closer the number gets to 1, the less room there is left to grow. The same multiplication of the odds leads to smaller and smaller increases in probability. 
+
+# 7. Predicted probabilities and odds ratios
+
+```{r, pred}
+
+
+# ggpredict() returns one row per Neuroticism value x response category.
+pred <- ggpredict(Cent_Pred, terms = "neuro_c [all]")
+```
+
+```{r, stacked plot}
+#| echo: FALSE
+
+pred |>
+  as.data.frame() |>
+  mutate(
+    response.level = factor(response.level,
+                            labels = n_levels),
+    agree = x + neuro_bar   
+  ) |>
+  ggplot(aes(agree, predicted, fill = response.level)) +
+  geom_area(position = "stack") +
+  scale_y_continuous(labels = scales::percent) +
+  guides(fill = guide_legend(nrow = 2)) +
+  labs(title = "Predicted probability of each response to O4: 'Spend time reflecting on things'",
+       x = "Neuroticism (subscale mean)", 
+       y = "Predicted probability", fill = NULL) 
+```
+At low **neuroticism**, the probability is spread across three “accurate” categories. As **neuroticism** rises, it moves towards *very accurate*, which grows from about 25% to about 60%. At every value of **neuroticism**, the six probabilities sum to 1, which is why the stack always reaches 100%
+
+```{r, OR plot}
+#| echo: FALSE
+
+bind_rows(
+  tibble(Threshold = "Shared (proportional odds)", OR = or_tab$estimate,
+         low = or_tab$conf.low, high = or_tab$conf.high, type = "Shared"),
+  threshold_or |> transmute(Threshold, OR, low, high, type = "Threshold-specific")
+) |>
+  mutate(Threshold = fct_rev(fct_inorder(Threshold))) |>   # keep thresholds in order, top to bottom
+  ggplot(aes(OR, Threshold, colour = type)) +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = "grey50") +  # OR = 1 means no effect
+  geom_pointrange(aes(xmin = low, xmax = high)) +
+  labs(title = "Cumulative odds ratios per point of Neuroticism ",
+       x = "Odds ratio (responding above the threshold)", y = NULL, colour = NULL) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+As seen in the graph, all the intervals are above 1.0, represented by the dashed line. This indicates that higher **neuroticism** is linked to higher responses to “Spend time reflecting on things” at every threshold. The threshold-specific estimates cluster around the shared estimate of about 1.37. The lowest threshold is a bit higher in comparison to this, but its interval is wide and overlaps with the others, which fits the non-significant nominal test and supports proportional odds. 
+
+## Results and Write up
+We were predicting responses to the Openness item O4, “Spend time reflecting on things,” from the **neuroticism** score. This was done by having participants choose O4 based on a 6-point scale from *very inaccurate* to *very accurate*, and comparing it to the mean-centred subscale score (*N* = `r format(nrow(data), big.mark = ",")`). None of the categories were collapsed. The least common category, *Very inaccurate*, still contained `r min(O4_counts$n)` responses. Adding **neuroticism** significantly improved fit over a thresholds-only null model²(`r lr_df`) = `r round(lr_stat, 2)`, *p* < .001, and lowered AIC by `r round(d_aic, 1)` points, so the model including **neuroticism** was kept. 
+People who were considered more neurotic were more likely to then respond higher on O4, OR = `r round(or_tab$estimate, 2)`, 95% CI [`r round(or_tab$conf.low, 2)`, `r round(or_tab$conf.high, 2)`], *p* < .001. Each one-point increase in **neuroticism** raised the odds of a higher response by about `r round(100 * (or_tab$estimate - 1))`%. The proportional odds assumption held, χ²(`r nt_df`) = `r round(nt_lrt, 2)`, *p* = `r round(nt_p, 3)`, so a partial proportional odds model was not needed. The predicted probability of endorsing the item (Slightly accurate or higher) rose from `r round(prob_tab$Prob[1], 2)` at a **neuroticism** score of 3 to `r round(prob_tab$Prob[4], 2)` at a score of 6 (Figure 1). These results support the prediction that people higher in **neuroticism** spend more time reflecting on things.
+

@@ -1,0 +1,11 @@
+project:
+  type: website
+  output-dir: docs
+  
+website:
+  title: "Lab 6: Ordinal Regression"
+  
+format:
+  html: 
+    theme: cosmo
+    toc: true 
