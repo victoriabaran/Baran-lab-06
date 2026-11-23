@@ -1,0 +1,550 @@
+---
+title: "Ordinal Logistic Regression with the Big Five"
+subtitle: "Lab demo: does Agreeableness predict 'Get angry easily'?"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    html-math-method: katex
+execute:
+  echo: true
+  warning: false
+  message: false
+  fig-width: 8
+  fig-height: 4.4
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(tidyverse)
+library(psych)      
+library(ordinal)   
+library(readxl)     
+library(ggeffects)
+library(broom)    
+library(gt)    
+
+```
+
+## Question and Predictions
+
+The `bfi` data contain 25 personality items from 2,800 people, five items per Big Five trait. Each item is answered on a 6-point scale from *Very inaccurate* to *Very accurate*.
+
+The **chosen trait is Neuroticism**. The ordered outcome is one Neuroticism item, **N1, "Get angry easily."** The predictor is a person's **Agreeableness subscale score**, the mean of A1 to A5 with A1 reverse-keyed.
+
+I predict that as people are more agreeable, they will be less likely to get angry easily.
+
+Be sure to check assignment instructions for what should be included in your report. Not all descriptive components are included in this demo.
+
+## Load and inspect the data
+
+```{r}
+#| echo: false
+
+data <- read_excel("./bfi.xlsx")
+
+data<- data|>
+  mutate_at(2:26, as.integer)
+
+# Check the data
+#head(data)
+```
+
+## Data preparation
+
+```{r}
+#| echo: FALSE
+
+# Labels for the six response options, from lowest to highest
+n_levels <- c("Very inaccurate", "Moderately inaccurate", "Slightly inaccurate",
+              "Slightly accurate", "Moderately accurate", "Very accurate")
+
+# Scoring keys with reverse-keyed items
+keys <- list(
+  Agreeableness     = c("-A1", "A2", "A3", "A4", "A5"),
+  Conscientiousness = c("C1", "C2", "C3", "-C4", "-C5"),
+  Extraversion      = c("-E1", "-E2", "E3", "E4", "E5"),
+  Neuroticism       = c("N1", "N2", "N3", "N4", "N5"),
+  Openness          = c("O1", "-O2", "O3", "O4", "-O5")
+)
+
+scores<-scoreItems(keys, data, totals = F, min=1, max=6)
+
+scores_df<- scores$scores
+
+# Mutate data to include the ordered outcome, an unordered outcome, and the predictor (raw and centred)
+data <- data |>
+  select(N1) |>
+  bind_cols(as_tibble(scores_df)) |>
+  mutate(
+    N1 = factor(N1, levels = 1:6, labels = n_levels, ordered = TRUE),   # The ordered outcome
+    highest = factor(names(keys)[max.col(scores_df, ties.method = "first")]),  # Unordered outcome:highest-scoring trait
+    agree = Agreeableness
+  ) |>
+  drop_na(N1, agree, highest) |>
+  mutate(agree_c = agree - mean(agree))  # Centre AFTER dropping missing cases
+
+agree_bar <- mean(data$agree)
+```
+
+# 1. Look at the outcomes first
+
+## The ordered outcome
+
+```{r, n1 counts}
+#| echo: FALSE
+
+# Count how many people chose each response option for N1.
+n1_counts <- data |>
+  count(N1) |>
+  # p is the proportion of the sample in each category, P(Y = j).
+  mutate(p = n / sum(n))
+```
+
+Check that no category is empty or very sparse.
+
+```{r}
+#| echo: FALSE
+
+n1_counts
+```
+
+Every category has plenty of responses (the smallest, *Very accurate*, has `r min(n1_counts$n)`), so each threshold can be estimated without collapsing categories.
+
+This can be displayed graphically:
+
+```{r, n1 bar graph}
+#| echo: FALSE
+#plot the counts
+plot_n1 <- ggplot(n1_counts, aes(x = N1, y = n, fill = N1)) +
+  geom_col(width = 0.7) +
+  scale_x_discrete(labels = scales::label_wrap(12)) +
+  labs(title = "Six ordered categories: 'Get angry easily'",
+       x = NULL, y = "People") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| echo: FALSE
+plot_n1
+```
+
+## How the predictor relates to the responses
+
+We can also visualize how the predictor relates to the responses, seeing how each person's Agreeableness score relates to their N1 response. Because many people have the same Agreeableness score and the same N1 response, we use *`geom_jitter`* to spread out the overlapping points.
+
+```{r, jitter plot}
+#| echo: FALSE
+
+plot_jitter<-ggplot(data, aes(agree, as.numeric(N1), colour = N1)) +
+  geom_jitter(width = 0.05, height = 0.15, alpha = 0.25, size = 1.4) +
+  scale_y_continuous(breaks = 1:6, labels = n_levels) +
+  labs(title = "Higher Agreeableness, lower anger responses, with lots of overlap",
+       x = "Agreeableness (subscale mean, 1-6)", y = NULL) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| echo: FALSE
+
+plot_jitter
+```
+
+The outcome takes only six values. A good model should predict a probability for each of those six categories, not a specific decimal average that is not an option to choose.
+
+## An unordered outcome
+
+Each person's **dominant trait** (their highest of the five subscale scores) is a set of categories with **no built-in order**. Being highest on Openness is not "more" than being highest on Agreeableness. An outcome like this requires a baseline-category (multinomial) model, such as `nnet::multinom()`, rather than `clm()`.
+
+Here we can see how many people have each trait as their highest.
+
+```{r}
+#| echo: FALSE
+
+ordered_dat <- data |>
+  count(highest) |>
+  mutate(highest = fct_reorder(highest, n)) # fct_reorder() sorts the bars by size
+
+#plot the unordered outcome
+unordered_plot <- ggplot(ordered_dat, aes(highest, n)) +
+  geom_col(width = 0.65, fill = "maroon") +
+  coord_flip() +
+  labs(title = "Dominant trait: five categories with no order",
+       x = NULL, y = "People") +
+  theme_minimal()
+```
+
+```{r}
+#| echo: FALSE
+
+unordered_plot
+```
+
+# 2. Cumulative probabilities
+
+A cumulative probability is the probability of responding **with a specific response category (*j*)** or lower. With six categories there are five cumulative probabilities to model. This is because we are dealing with cumulative thresholds which we are converting to probabilities. Remember that cumulative thresholds are cumulative — meaning they capture the probability of a participant providing any response option OR one below it (i.e., selecting slightly inaccurate OR moderately inaccurate OR very inaccurate). That is why we have 5 cumulative probabilities and not six – the cumulative probability of the sixth category (very accurate) is 100%.
+
+```{r, cumulative prob table}
+#| echo: FALSE
+
+obs_tab <- data |>
+  count(N1) |>
+  mutate(
+    Probability = n / sum(n),
+    CumulativeProbability = cumsum(Probability), #cumsum() is a running total, adding each category's proportion to all the ones below it
+    #if_else() leaves the top category blank (NA), because P(above) = 0 the
+    CumulativeOdds = if_else(CumulativeProbability < 1,
+                             CumulativeProbability / (1 - CumulativeProbability), NA_real_),
+    Cumulative_Logodds = if_else(CumulativeProbability < 1,
+                                 qlogis(CumulativeProbability), NA_real_)   # qlogis() turns a probability into log-odds
+
+  )
+
+# create a clean table with gt
+obs_tab |>
+  gt() |>
+  cols_label(
+    N1 = "Category in N1 (j)",
+    n = "n",
+    Probability = "P(Y = j)",
+    CumulativeProbability = "P(Y ≤ j)",
+    CumulativeOdds = "Odds of ≤ j",
+    Cumulative_Logodds = "Log-odds of ≤ j"
+  ) |>
+  fmt_number(columns = c(Probability, CumulativeProbability), decimals = 3) |>
+  fmt_number(columns = c(CumulativeOdds, Cumulative_Logodds), decimals = 2) |>
+  sub_missing(missing_text = "—")
+
+```
+
+Each cumulative probability splits the scale in two, as at or below *j* versus above *j*.This becomes a binary outcome which we can easily model using logit as our link function. The ordinal model does this at every threshold point at once, and the order of the categories is built in.
+
+# 3. The model with a centred predictor
+
+We **centred** Agreeableness earlier, so that the thresholds describe a person of average Agreeableness (`r agree_bar`), rather than an impossible person scoring 0 on a 1-6 scale. Centring changes the thresholds but **not** the slope.
+
+When reading the `summary()` output, the **thresholds** are the points at which a response moved from one category to the next. **Coefficients** are the **slopes** which represent the effect of Agreeableness on the latent logit scale.
+
+```{r, modelling with a centred predictor}
+#| echo: FALSE
+
+# Null model: thresholds only, no predictors
+null <- clm(N1 ~ 1, data = data)
+
+# One-predictor model
+one_pred <- clm(N1 ~ agree_c, data = data)
+
+summary(one_pred)
+```
+
+```{r, saving elements for inline code}
+#| echo: FALSE
+
+
+# coef() lists every estimate in the model: the 5 thresholds first, then the slope.
+coef(one_pred)
+
+# The slope for Agreeableness, pulled out by name
+b <- coef(one_pred)[["agree_c"]]
+
+# The five thresholds are the first five estimates
+th <- coef(one_pred)[1:5]
+
+# Category probabilities for a person of average Agreeableness (agree_c = 0).
+# plogis() turns log-odds into a probability, so plogis(th) gives P(Y <= j).
+cum_avg <- plogis(th)
+
+# Category probabilities for a person of average Agreeableness (agree_c = 0).
+# cumulative probabilities. Writing them out one at a time:
+cat_p <- c(cum_avg[1] - 0,          # Very inaccurate
+           cum_avg[2] - cum_avg[1], # Moderately inaccurate
+           cum_avg[3] - cum_avg[2], # Slightly inaccurate
+           cum_avg[4] - cum_avg[3], # Slightly accurate
+           cum_avg[5] - cum_avg[4], # Moderately accurate
+           1 - cum_avg[5])          # Very accurate
+
+# tidy() (broom package) turns the model output into a data frame.
+#   conf.int = TRUE      -> add 95% confidence intervals
+#   exponentiate = TRUE  -> report odds ratios (e^beta) instead of log-odds
+# filter(coef.type == "location") keeps the slope and drops the thresholds.
+or_tab <- tidy(one_pred, conf.int = TRUE, exponentiate = TRUE) |>
+  filter(coef.type == "location")
+```
+
+The estimated slope is beta = `r b`, so Higher Agreeableness **raises** the log-odds of being at or below each threshold, which shifts responses toward the **lower** ("inaccurate") categories.
+
+## What the centred thresholds mean
+
+```{r}
+#| echo: FALSE
+
+# plogis() turns a log-odds into a probability. 
+
+tibble(
+  Category = n_levels,
+  theta = c(th, NA),
+  cum = c(plogis(th), 1),
+  cat_p = diff(c(0, plogis(th), 1))
+) |>
+  gt() |>
+  cols_label(
+    theta = "Threshold above category",
+    cum = "P(Y ≤ j)",
+    cat_p = "P(Y = j)"
+  ) |>
+  fmt_number(columns = theta, decimals = 2) |>
+  fmt_number(columns = c(cum, cat_p), decimals = 2) |>
+  sub_missing(missing_text = "—")
+
+```
+
+Apply `plogis()` to each threshold to get a cumulative probability, then take differences. For a person of average Agreeableness, the most likely response is *`r n_levels[which.max(cat_p)]`* (`r max(cat_p)`). Their probability of endorsing the item at all, that is, *Slightly accurate* or lower, is the probability of *Slightly accurate* at 81%. 
+
+# 4. Null model versus one-predictor model
+
+The null model has thresholds only. With no predictors, its thresholds reproduce the observed cumulative log-odds from Section 2 exactly:
+
+```{r}
+#| echo: FALSE
+
+# View thresholds produced, and how they are the same as the cumulative log-odds
+coef(null)
+obs_tab$Cumulative_Logodds[1:5]
+```
+
+This is a useful sanity check: it shows the thresholds are just cumulative log-odds. Once a predictor is added, the thresholds become *conditional* on it (here, describing an average-Agreeableness person), so they no longer match the raw proportions.
+
+Now we compare the two nested models with a likelihood ratio test (LRT) and AIC:
+
+```{r, LRT}
+#| echo: FALSE
+
+# anova() on two clm models gives an LRT
+lrt <- anova(null, one_pred)
+lrt
+```
+
+Adding Agreeableness improves fit substantially.
+
+```{r, AIC}
+#| echo: FALSE
+
+# logLik() and AIC() pull the fit statistics from each model.
+# length(coef(...)) counts the estimated parameters.
+tibble(
+  Model = c("Null", "Agreeableness"),
+  Parameters = c(length(coef(null)), length(coef(one_pred))),
+  logLik = c(logLik(null), logLik(one_pred)),
+  AIC = c(AIC(null), AIC(one_pred))
+) |>
+  mutate(`ΔAIC` = AIC - min(AIC)) |>
+  gt() |>
+  fmt_number(columns = c(logLik, AIC, `ΔAIC`), decimals = 1)
+```
+
+AIC agrees with the likelihood ratio test: the Agreeableness model is preferred by a wide margin (ΔAIC = `r sprintf("%.1f", AIC(null) - AIC(one_pred))`).
+
+## 4b. Comparing and interpreting the chosen model
+
+```{r, lrt aic values for inline coding}
+#| echo: FALSE
+
+# The LRT table has one row per model; row 2 holds the test results.
+# $ pulls out a column by name.
+lr_stat <- lrt$LR.stat[2]
+lr_df <- lrt$df[2]
+lr_p <- lrt$`Pr(>Chisq)`[2]
+d_aic <- AIC(null) - AIC(one_pred)
+```
+
+The slope, beta = `r b`, is on the latent logit scale. A one-point increase in Agreeableness moves a person's latent "anger proneness" as reflected by N1 down by `r abs(b)`. The middle categories are each about `r mean(diff(th)[2:3])` units wide on that scale, so one point of Agreeableness shifts someone by roughly `r 100 * abs(b) / mean(diff(th)[2:3])`% of a category.
+
+# 5. Checking proportional odds
+
+The model assumes one shared slope across all five threshold `nominal_test()` refits the model with a separate Agreeableness slope at each threshold and compares the two models with an LRT.
+
+`nominal_test()` checks it by fitting a second model in which Agreeableness gets a separate slope at each threshold: a different push at each gap. A likelihood ratio test then compares the two models. If giving Agreeableness five pushes doesn’t fit significantly better than one, the shared slope is enough and the proportional odds assumption holds.
+
+```{r, nominal test}
+#| echo: FALSE
+
+nt <- nominal_test(one_pred)
+nt
+```
+
+```{r, nominal values for inline}
+#| echo: FALSE
+
+# nt is a table: pick out [row, column] by name
+
+nt_lrt <- nt["agree_c", "LRT"]
+nt_df <- nt["agree_c", "Df"]
+nt_p <- nt["agree_c", "Pr(>Chi)"]
+```
+
+The test is **not** significant. The data are consistent with a single shared slope, so the proportional-odds model is retained.
+
+If this test was significant, we should use a partial proportional-odds model as seen below, and report this alongside the main model.
+
+```{r, nominal fit model}
+#| echo: FALSE
+
+#fit this model
+m_nom <- clm(N1 ~ 1, nominal = ~ agree_c, data = data)
+
+#compare the two models to see which has superior fit (commented out for now)
+#anova(one_pred, m_nom)
+```
+
+```{r, nominal coefficients for inline}
+#| echo: FALSE
+
+# Look at the estimates: the first 5 are the thresholds,
+# and estimates 6 to 10 are the five Agreeableness slopes (one per threshold).
+coef(m_nom)
+
+# The five threshold-specific slopes
+nom_est <- coef(m_nom)[6:10]
+
+# Their standard errors. vcov() gives the variance-covariance matrix of the
+# estimates; diag() takes its diagonal (the variances), and sqrt() turns
+# variances into standard errors.
+nom_se <- sqrt(diag(vcov(m_nom)))[6:10]
+
+threshold_or <- tibble(
+  Threshold = c("Very inaccurate | Moderately inaccurate",
+                "Moderately inaccurate | Slightly inaccurate",
+                "Slightly inaccurate | Slightly accurate",
+                "Slightly accurate | Moderately accurate",
+                "Moderately accurate | Very accurate"),
+  Estimate = nom_est,
+  SE = nom_se,
+  OR = exp(-Estimate),              
+  low = exp(-(Estimate + 1.96 * SE)),
+  high = exp(-(Estimate - 1.96 * SE))
+)
+```
+
+If our model required nominal effects, we would report the threshold-specific odds ratios and their confidence intervals.
+
+# 6. Interpreting the coefficient by changing odds ratios to probabilities
+
+```{r, interpret odds ratio}
+#| echo: false
+
+or_tab <- tidy(one_pred, conf.int = TRUE, exponentiate = TRUE) |>
+  filter(coef.type == "location")
+```
+
+**Agreeableness:** e\^beta = `r or_tab$estimate`, 95% CI \[`r or_tab$conf.low`, `r or_tab$conf.high`\], p `r or_tab$p.value`. Each one-point increase in Agreeableness multiplies the odds of responding **above any threshold** (for example, "Slightly accurate or higher" versus lower) by `r or_tab$estimate`. That is a **`r round(100 * (1 - or_tab$estimate))`% decrease** in those odds.
+
+An odds ratio is not a change in the number of categories, and it is not a ratio of probabilities. The table below translates it into probabilities. It uses the threshold between *Slightly inaccurate* and *Slightly accurate*, so it shows the probability of endorsing the item at all:
+
+```{r, converting the OR to probabilities}
+#| echo: FALSE
+
+# We use the threshold between "Slightly inaccurate" and "Slightly accurate",
+# which is the 3rd threshold: th[3].
+# Because the model used centred Agreeableness, we subtract agree_bar
+# from each raw score first.
+# The model gives log-odds of being AT OR BELOW the threshold:
+#   log-odds = threshold - slope * agree_c
+
+# Agreeableness = 3
+logodds_3 <- th[3] - b * (3 - agree_bar)   # log-odds of at or below
+prob_3    <- 1 - plogis(logodds_3)         # plogis() -> probability; 1 - it = P(above)
+odds_3    <- prob_3 / (1 - prob_3)         # odds of being above
+
+# Agreeableness = 4
+logodds_4 <- th[3] - b * (4 - agree_bar)
+prob_4    <- 1 - plogis(logodds_4)
+odds_4    <- prob_4 / (1 - prob_4)
+
+# Agreeableness = 5
+logodds_5 <- th[3] - b * (5 - agree_bar)
+prob_5    <- 1 - plogis(logodds_5)
+odds_5    <- prob_5 / (1 - prob_5)
+
+# Agreeableness = 6
+logodds_6 <- th[3] - b * (6 - agree_bar)
+prob_6    <- 1 - plogis(logodds_6)
+odds_6    <- prob_6 / (1 - prob_6)
+
+prob_tab <- tibble(
+  Agreeableness = c(3, 4, 5, 6),
+  Prob = c(prob_3, prob_4, prob_5, prob_6),
+  Odds = c(odds_3, odds_4, odds_5, odds_6)
+)
+
+prob_tab |>
+  gt() |>
+  cols_label(Prob = "P(Slightly accurate or higher)") |>
+  fmt_number(columns = c(Prob, Odds), decimals = 2)
+```
+
+Each one-point step multiplies the odds by `r prob_tab$Odds[2] / prob_tab$Odds[1]`, which is the OR. The **probability**, however, falls by `r prob_tab$Prob[1] - prob_tab$Prob[2]` from 3 to 4 but by only `r prob_tab$Prob[3] - prob_tab$Prob[4]` from 5 to 6. A constant odds ratio implies different probability changes depending on where you start, which is why we also plot predicted probabilities.
+
+# 7. Predicted probabilities and odds ratios
+
+## 7a. Predicted category probabilities
+
+```{r, pred}
+#| echo: FALSE
+
+# ggpredict() returns one row per Agreeableness value x response category.
+pred <- ggpredict(one_pred, terms = "agree_c [all]")
+```
+
+```{r, stacked plot}
+#| echo: FALSE
+
+pred |>
+  as.data.frame() |>
+  mutate(
+    response.level = factor(response.level,
+                            labels = n_levels),
+    agree = x + agree_bar   
+  ) |>
+  ggplot(aes(agree, predicted, fill = response.level)) +
+  geom_area(position = "stack") +
+  scale_y_continuous(labels = scales::percent) +
+  guides(fill = guide_legend(nrow = 2)) +
+  labs(title = "Predicted probability of each response to N1: 'Get angry easily'",
+       x = "Agreeableness (subscale mean)", 
+       y = "Predicted probability", fill = NULL) 
+```
+
+At low Agreeableness, much of the probability sits in the "accurate" categories. As Agreeableness rises, it moves toward *Very inaccurate* and *Moderately inaccurate*. At every value of Agreeableness, the six probabilities sum to 1, which is why the stack always reaches 100%.
+
+## 7b. Coefficient plot of cumulative odds ratios
+
+The plot shows the shared proportional-odds OR alongside the threshold-specific ORs from Section 5, so it also works as a visual check of proportional odds.
+
+```{r, OR plot}
+#| echo: FALSE
+
+bind_rows(
+  tibble(Threshold = "Shared (proportional odds)", OR = or_tab$estimate,
+         low = or_tab$conf.low, high = or_tab$conf.high, type = "Shared"),
+  threshold_or |> transmute(Threshold, OR, low, high, type = "Threshold-specific")
+) |>
+  mutate(Threshold = fct_rev(fct_inorder(Threshold))) |>   # keep thresholds in order, top to bottom
+  ggplot(aes(OR, Threshold, colour = type)) +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = "grey50") +  # OR = 1 means no effect
+  geom_pointrange(aes(xmin = low, xmax = high)) +
+  labs(title = "Cumulative odds ratios per point of Agreeableness",
+       x = "Odds ratio (responding above the threshold)", y = NULL, colour = NULL) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Every interval sits well below 1 (the dashed line). The threshold-specific estimates also cluster around the shared estimate, which is what proportional odds implies.
+
+# 8. Results paragraph
+
+We fit a cumulative logit (proportional-odds) model predicting responses to "Get angry easily" from mean-centred Agreeableness (N= `r format(nrow(data), big.mark = ",")`). Agreeableness improved fit over a null model, chi\^2(`r lr_df`) = `r lr_stat`, p `r lr_p`. As predicted, more agreeable people were less likely to endorse the item, OR = `r or_tab$estimate`, 95% CI \[`r or_tab$conf.low`, `r or_tab$conf.high`\]: each one-point increase in Agreeableness lowered the odds of a higher response by about `r round(100 * (1 - or_tab$estimate))`%. The proportional-odds assumption held, chi\^2(`r nt_df`) = `r nt_lrt`, p `r nt_p`. The predicted probability of endorsing the item fell from `r prob_tab$Prob[1]` at an Agreeableness score of 3 to `r prob_tab$Prob[4]` at a score of 6 (Figure X).
